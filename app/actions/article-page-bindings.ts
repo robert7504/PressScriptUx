@@ -5,6 +5,7 @@ import { ApiError } from "@/lib/api/client";
 import {
   createArticlePageBinding,
   deleteArticlePageBinding,
+  updateArticlePageBinding,
 } from "@/lib/article-page-bindings/api";
 import type {
   ArticlePageBindingActionState,
@@ -123,6 +124,38 @@ export async function createArticleAndBindAction(input: {
       pageId,
       coordinates,
     });
+    revalidateBindingPaths(sectionId, pageId);
+    return { success: true };
+  } catch (error) {
+    if (error instanceof ApiError) {
+      return { error: error.message };
+    }
+    throw error;
+  }
+}
+
+export async function updateArticlePageBindingAction(input: {
+  id: string;
+  articleId: string;
+  pageId: string;
+  sectionId: string;
+  coordinates: ArticlePageCoordinates;
+}): Promise<ArticlePageBindingActionState> {
+  const authError = await ensureAuthenticated();
+  if (authError) return authError;
+
+  const id = input.id.trim();
+  const articleId = input.articleId.trim();
+  const pageId = input.pageId.trim();
+  const sectionId = input.sectionId.trim();
+  const coordinates = parseCoordinates(input.coordinates);
+
+  if (!id || !articleId || !pageId || !sectionId || !coordinates) {
+    return { error: "Nieprawidłowe dane powiązania artykułu ze stroną." };
+  }
+
+  try {
+    await updateArticlePageBinding(id, { articleId, pageId, coordinates });
     revalidateBindingPaths(sectionId, pageId);
     return { success: true };
   } catch (error) {

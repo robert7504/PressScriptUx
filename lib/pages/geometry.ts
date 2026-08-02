@@ -216,3 +216,149 @@ export function moduleCellAtPoint(
   }
   return null;
 }
+
+/** Nearest module cell to a page-unit point (useful over gaps/margins while dragging). */
+export function nearestModuleCell(
+  layout: PageLayout,
+  x: number,
+  y: number,
+): ModuleCell | null {
+  if (layout.modules.length === 0) return null;
+  const direct = moduleCellAtPoint(layout, x, y);
+  if (direct) return direct;
+
+  let bestIndex = 0;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  for (let index = 0; index < layout.modules.length; index += 1) {
+    const module = layout.modules[index];
+    const cx = module.x + module.width / 2;
+    const cy = module.y + module.height / 2;
+    const distance = (cx - x) ** 2 + (cy - y) ** 2;
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      bestIndex = index;
+    }
+  }
+  return moduleCellFromIndex(bestIndex, layout.modulesX);
+}
+
+/**
+ * Recover the module range covered by binding coordinates.
+ * Uses module centers so gaps between modules still map cleanly.
+ */
+export function moduleSelectionFromCoordinates(
+  layout: PageLayout,
+  coordinates: ArticlePageCoordinates,
+): ModuleSelection | null {
+  const rect = rectFromCoordinates(coordinates);
+  let minCol = Number.POSITIVE_INFINITY;
+  let maxCol = Number.NEGATIVE_INFINITY;
+  let minRow = Number.POSITIVE_INFINITY;
+  let maxRow = Number.NEGATIVE_INFINITY;
+  let found = false;
+
+  for (let index = 0; index < layout.modules.length; index += 1) {
+    const module = layout.modules[index];
+    const cx = module.x + module.width / 2;
+    const cy = module.y + module.height / 2;
+    if (
+      cx >= rect.x &&
+      cx <= rect.x + rect.width &&
+      cy >= rect.y &&
+      cy <= rect.y + rect.height
+    ) {
+      const cell = moduleCellFromIndex(index, layout.modulesX);
+      minCol = Math.min(minCol, cell.col);
+      maxCol = Math.max(maxCol, cell.col);
+      minRow = Math.min(minRow, cell.row);
+      maxRow = Math.max(maxRow, cell.row);
+      found = true;
+    }
+  }
+
+  if (!found) return null;
+  return {
+    start: { col: minCol, row: minRow },
+    end: { col: maxCol, row: maxRow },
+  };
+}
+
+/** Translate a module selection by cell deltas, clamped to the grid. */
+export function moveModuleSelection(
+  layout: PageLayout,
+  selection: ModuleSelection,
+  deltaCol: number,
+  deltaRow: number,
+): ModuleSelection {
+  const bounds = normalizeModuleSelection(selection);
+  const width = bounds.maxCol - bounds.minCol;
+  const height = bounds.maxRow - bounds.minRow;
+  const minCol = Math.max(
+    0,
+    Math.min(bounds.minCol + deltaCol, layout.modulesX - 1 - width),
+  );
+  const minRow = Math.max(
+    0,
+    Math.min(bounds.minRow + deltaRow, layout.modulesY - 1 - height),
+  );
+  return {
+    start: { col: minCol, row: minRow },
+    end: { col: minCol + width, row: minRow + height },
+  };
+}
+
+export type ResizeHandle = "n" | "s" | "e" | "w" | "ne" | "nw" | "se" | "sw";
+
+/** Resize a module selection by snapping the active edge(s) to a target cell. */
+export function resizeModuleSelection(
+  layout: PageLayout,
+  selection: ModuleSelection,
+  handle: ResizeHandle,
+  target: ModuleCell,
+): ModuleSelection {
+  const bounds = normalizeModuleSelection(selection);
+  let minCol = bounds.minCol;
+  let maxCol = bounds.maxCol;
+  let minRow = bounds.minRow;
+  let maxRow = bounds.maxRow;
+
+  const col = Math.max(0, Math.min(target.col, layout.modulesX - 1));
+  const row = Math.max(0, Math.min(target.row, layout.modulesY - 1));
+
+  if (handle.includes("e")) maxCol = col;
+  if (handle.includes("w")) minCol = col;
+  if (handle.includes("s")) maxRow = row;
+  if (handle.includes("n")) minRow = row;
+
+  if (minCol > maxCol) {
+    const swap = minCol;
+    minCol = maxCol;
+    maxCol = swap;
+  }
+  if (minRow > maxRow) {
+    const swap = minRow;
+    minRow = maxRow;
+    maxRow = swap;
+  }
+
+  return {
+    start: { col: minCol, row: minRow },
+    end: { col: maxCol, row: maxRow },
+  };
+}
+
+export function moduleSelectionsEqual(
+  a: ModuleSelection | null,
+  b: ModuleSelection | null,
+) {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  const left = normalizeModuleSelection(a);
+  const right = normalizeModuleSelection(b);
+  return (
+    left.minCol === right.minCol &&
+    left.maxCol === right.maxCol &&
+    left.minRow === right.minRow &&
+    left.maxRow === right.maxRow
+  );
+}

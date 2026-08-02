@@ -21,6 +21,12 @@ export type ArticlePageBindingCreateInput = {
   coordinates: ArticlePageCoordinates;
 };
 
+export type ArticlePageBindingUpdateInput = {
+  articleId: string;
+  pageId: string;
+  coordinates: ArticlePageCoordinates;
+};
+
 export type ArticlePageBindingActionState = {
   error?: string;
   success?: boolean;

@@ -12,6 +12,7 @@ import FormatSizeIcon from "@mui/icons-material/FormatSize";
 import LogoutIcon from "@mui/icons-material/Logout";
 import MenuBookIcon from "@mui/icons-material/MenuBook";
 import MenuIcon from "@mui/icons-material/Menu";
+import CampaignIcon from "@mui/icons-material/Campaign";
 import ImageIcon from "@mui/icons-material/Image";
 import NewspaperIcon from "@mui/icons-material/Newspaper";
 import SettingsIcon from "@mui/icons-material/Settings";
@@ -74,7 +75,9 @@ const navItems: NavItem[] = [
     icon: <FormatSizeIcon />,
   },
   { label: "Zdjęcia", href: "/images", icon: <ImageIcon /> },
+  { label: "Reklamy", href: "/advertisements", icon: <CampaignIcon /> },
   { label: "Tetris", href: "/games/tetris", icon: <SportsEsportsIcon /> },
+
   { label: "Ustawienia", href: "/settings", icon: <SettingsIcon /> },
 ];
 

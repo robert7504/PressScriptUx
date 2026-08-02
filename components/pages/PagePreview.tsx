@@ -22,8 +22,12 @@ import {
   createArticleAndBindAction,
   createArticlePageBindingAction,
   deleteArticlePageBindingAction,
+  updateArticlePageBindingAction,
 } from "@/app/actions/article-page-bindings";
-import type { ArticlePageBinding } from "@/lib/article-page-bindings/types";
+import type {
+  ArticlePageBinding,
+  ArticlePageCoordinates,
+} from "@/lib/article-page-bindings/types";
 import type { Article } from "@/lib/articles/types";
 import {
   buildPageLayout,
@@ -31,10 +35,17 @@ import {
   isModuleSelected,
   moduleCellAtPoint,
   moduleCellFromIndex,
+  moduleSelectionFromCoordinates,
+  moduleSelectionsEqual,
+  moveModuleSelection,
+  nearestModuleCell,
+  normalizeModuleSelection,
   rectFromCoordinates,
+  resizeModuleSelection,
   scaleToFit,
   sortPages,
   type ModuleSelection,
+  type ResizeHandle,
 } from "@/lib/pages/geometry";
 import {
   PAGE_SIDE_LABELS,
@@ -57,6 +68,56 @@ const MODULE_STROKE = "#9a9184";
 const CONTENT_STROKE = "#b7aea0";
 const SELECTION_FILL = "rgba(30, 90, 75, 0.28)";
 const SELECTION_STROKE = "#1e5a4b";
+const HANDLE_FILL = "#1e5a4b";
+
+type BindingEditMode =
+  | { type: "move"; origin: { col: number; row: number } }
+  | { type: "resize"; handle: ResizeHandle };
+
+type BindingEditState = {
+  bindingId: string;
+  pointerId: number;
+  baseSelection: ModuleSelection;
+  draftSelection: ModuleSelection;
+  mode: BindingEditMode;
+};
+
+const RESIZE_HANDLES: ResizeHandle[] = [
+  "nw",
+  "n",
+  "ne",
+  "e",
+  "se",
+  "s",
+  "sw",
+  "w",
+];
+
+function cursorForHandle(handle: ResizeHandle) {
+  switch (handle) {
+    case "n":
+    case "s":
+      return "ns-resize";
+    case "e":
+    case "w":
+      return "ew-resize";
+    case "ne":
+    case "sw":
+      return "nesw-resize";
+    case "nw":
+    case "se":
+      return "nwse-resize";
+  }
+}
+
+function coordinatesEqual(
+  a: ArticlePageCoordinates,
+  b: ArticlePageCoordinates,
+) {
+  return (
+    a.x1 === b.x1 && a.y1 === b.y1 && a.x2 === b.x2 && a.y2 === b.y2
+  );
+}
 
 export default function PagePreview({
   section,
@@ -75,16 +136,26 @@ export default function PagePreview({
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
   const selectionRef = useRef<ModuleSelection | null>(null);
+  const bindingEditRef = useRef<BindingEditState | null>(null);
   const [viewportSize, setViewportSize] = useState({ width: 800, height: 700 });
   const [selection, setSelection] = useState<ModuleSelection | null>(null);
   const [dragging, setDragging] = useState(false);
+  const [bindingEdit, setBindingEdit] = useState<BindingEditState | null>(null);
   const [focusedBindingId, setFocusedBindingId] = useState<string | null>(null);
+  const [coordinateOverrides, setCoordinateOverrides] = useState<
+    Record<string, ArticlePageCoordinates>
+  >({});
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
 
   const updateSelection = useCallback((next: ModuleSelection | null) => {
     selectionRef.current = next;
     setSelection(next);
+  }, []);
+
+  const updateBindingEdit = useCallback((next: BindingEditState | null) => {
+    bindingEditRef.current = next;
+    setBindingEdit(next);
   }, []);
 
   const orderedPages = useMemo(() => sortPages(pages), [pages]);
@@ -111,11 +182,59 @@ export default function PagePreview({
     [articles],
   );
 
+  const bindingById = useMemo(
+    () => new Map(bindings.map((binding) => [binding.id, binding])),
+    [bindings],
+  );
+
+  const bindingCoordinates = useCallback(
+    (binding: ArticlePageBinding) =>
+      coordinateOverrides[binding.id] ?? binding.coordinates,
+    [coordinateOverrides],
+  );
+
   useEffect(() => {
     updateSelection(null);
+    updateBindingEdit(null);
+    setCoordinateOverrides({});
     setFocusedBindingId(null);
     setError(null);
-  }, [currentPage.id, updateSelection]);
+  }, [currentPage.id, updateBindingEdit, updateSelection]);
+
+  // Drop optimistic overrides once server props catch up.
+  useEffect(() => {
+    setCoordinateOverrides((prev) => {
+      const ids = Object.keys(prev);
+      if (ids.length === 0) return prev;
+
+      let changed = false;
+      const next = { ...prev };
+      for (const id of ids) {
+        const binding = bindingById.get(id);
+        if (!binding) {
+          delete next[id];
+          changed = true;
+          continue;
+        }
+        const serverSelection = moduleSelectionFromCoordinates(
+          layout,
+          binding.coordinates,
+        );
+        const overrideSelection = moduleSelectionFromCoordinates(
+          layout,
+          prev[id],
+        );
+        if (
+          coordinatesEqual(binding.coordinates, prev[id]) ||
+          moduleSelectionsEqual(serverSelection, overrideSelection)
+        ) {
+          delete next[id];
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [bindingById, bindings, layout]);
 
   useEffect(() => {
     const el = viewportRef.current;
@@ -147,6 +266,7 @@ export default function PagePreview({
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         updateSelection(null);
+        updateBindingEdit(null);
         setFocusedBindingId(null);
         return;
       }
@@ -160,23 +280,170 @@ export default function PagePreview({
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [goTo, nextPage, prevPage, updateSelection]);
+  }, [goTo, nextPage, prevPage, updateBindingEdit, updateSelection]);
 
-  const pointToModuleCell = useCallback(
+  const clientToPagePoint = useCallback(
     (clientX: number, clientY: number) => {
       const svg = svgRef.current;
       if (!svg) return null;
       const rect = svg.getBoundingClientRect();
       if (rect.width <= 0 || rect.height <= 0) return null;
-      const x = ((clientX - rect.left) / rect.width) * layout.pageWidth;
-      const y = ((clientY - rect.top) / rect.height) * layout.pageHeight;
-      return moduleCellAtPoint(layout, x, y);
+      return {
+        x: ((clientX - rect.left) / rect.width) * layout.pageWidth,
+        y: ((clientY - rect.top) / rect.height) * layout.pageHeight,
+      };
     },
-    [layout],
+    [layout.pageHeight, layout.pageWidth],
   );
 
+  const pointToModuleCell = useCallback(
+    (clientX: number, clientY: number) => {
+      const point = clientToPagePoint(clientX, clientY);
+      if (!point) return null;
+      return moduleCellAtPoint(layout, point.x, point.y);
+    },
+    [clientToPagePoint, layout],
+  );
+
+  const focusBinding = useCallback(
+    (bindingId: string) => {
+      updateSelection(null);
+      setFocusedBindingId(bindingId);
+      setError(null);
+    },
+    [updateSelection],
+  );
+
+  const saveBindingSelection = useCallback(
+    (bindingId: string, nextSelection: ModuleSelection) => {
+      const binding = bindingById.get(bindingId);
+      if (!binding) return;
+
+      const currentCoordinates =
+        coordinateOverrides[bindingId] ?? binding.coordinates;
+      const original = moduleSelectionFromCoordinates(
+        layout,
+        currentCoordinates,
+      );
+      if (moduleSelectionsEqual(original, nextSelection)) return;
+
+      const coordinates = coordinatesFromModuleSelection(layout, nextSelection);
+      if (!coordinates) {
+        setError("Nie udało się wyznaczyć obszaru aktywnego.");
+        return;
+      }
+
+      setError(null);
+      // Keep the new geometry visible while the server action + refresh catch up.
+      setCoordinateOverrides((prev) => ({ ...prev, [bindingId]: coordinates }));
+      startTransition(async () => {
+        const result = await updateArticlePageBindingAction({
+          id: binding.id,
+          articleId: binding.articleId,
+          pageId: currentPage.id,
+          sectionId: section.id,
+          coordinates,
+        });
+        if (result?.error) {
+          setCoordinateOverrides((prev) => {
+            const next = { ...prev };
+            delete next[bindingId];
+            return next;
+          });
+          setError(result.error);
+          return;
+        }
+        router.refresh();
+      });
+    },
+    [
+      bindingById,
+      coordinateOverrides,
+      currentPage.id,
+      layout,
+      router,
+      section.id,
+    ],
+  );
+
+  const beginBindingEdit = (
+    event: ReactPointerEvent,
+    bindingId: string,
+    mode: BindingEditMode,
+  ) => {
+    const binding = bindingById.get(bindingId);
+    if (!binding) return;
+    const baseSelection = moduleSelectionFromCoordinates(
+      layout,
+      bindingCoordinates(binding),
+    );
+    if (!baseSelection) {
+      setError("Nie udało się odczytać siatki powiązania.");
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    (event.currentTarget as Element).setPointerCapture?.(event.pointerId);
+    focusBinding(bindingId);
+    updateBindingEdit({
+      bindingId,
+      pointerId: event.pointerId,
+      baseSelection,
+      draftSelection: baseSelection,
+      mode,
+    });
+  };
+
+  const handleBindingPointerMove = (event: ReactPointerEvent) => {
+    const edit = bindingEditRef.current;
+    if (!edit || edit.pointerId !== event.pointerId) return;
+
+    const point = clientToPagePoint(event.clientX, event.clientY);
+    if (!point) return;
+    const cell = nearestModuleCell(layout, point.x, point.y);
+    if (!cell) return;
+
+    let nextSelection: ModuleSelection;
+    if (edit.mode.type === "move") {
+      nextSelection = moveModuleSelection(
+        layout,
+        edit.baseSelection,
+        cell.col - edit.mode.origin.col,
+        cell.row - edit.mode.origin.row,
+      );
+    } else {
+      nextSelection = resizeModuleSelection(
+        layout,
+        edit.baseSelection,
+        edit.mode.handle,
+        cell,
+      );
+    }
+
+    if (moduleSelectionsEqual(edit.draftSelection, nextSelection)) return;
+    updateBindingEdit({ ...edit, draftSelection: nextSelection });
+  };
+
+  const endBindingEdit = (event: ReactPointerEvent) => {
+    const edit = bindingEditRef.current;
+    if (!edit || edit.pointerId !== event.pointerId) return;
+
+    const draft = edit.draftSelection;
+    const bindingId = edit.bindingId;
+    // Optimistic coords first, then clear draft (batched) — avoids a flash
+    // back to the previous server geometry while the action refreshes.
+    saveBindingSelection(bindingId, draft);
+    updateBindingEdit(null);
+    try {
+      (event.currentTarget as Element).releasePointerCapture?.(event.pointerId);
+    } catch {
+      // already released
+    }
+  };
+
   const handleSvgPointerDown = (event: ReactPointerEvent<SVGSVGElement>) => {
-    if (event.button !== 0) return;
+    if (event.button !== 0 || bindingEditRef.current) return;
     const cell = pointToModuleCell(event.clientX, event.clientY);
     if (!cell) return;
     event.preventDefault();
@@ -187,6 +454,10 @@ export default function PagePreview({
   };
 
   const handleSvgPointerMove = (event: ReactPointerEvent<SVGSVGElement>) => {
+    if (bindingEditRef.current?.pointerId === event.pointerId) {
+      handleBindingPointerMove(event);
+      return;
+    }
     if (!dragging) return;
     const current = selectionRef.current;
     if (!current) return;
@@ -196,6 +467,10 @@ export default function PagePreview({
   };
 
   const handleSvgPointerUp = (event: ReactPointerEvent<SVGSVGElement>) => {
+    if (bindingEditRef.current?.pointerId === event.pointerId) {
+      endBindingEdit(event);
+      return;
+    }
     if (!dragging) return;
     setDragging(false);
     try {
@@ -301,6 +576,7 @@ export default function PagePreview({
   const labelPadX = labelFontSize * 0.45;
   const labelPadY = labelFontSize * 0.35;
   const labelLineHeight = labelFontSize * 1.25;
+  const handleSize = Math.max(layout.pageWidth * 0.018, 1.6);
 
   return (
     <Box
@@ -428,7 +704,7 @@ export default function PagePreview({
                 viewBox={`0 0 ${layout.pageWidth} ${layout.pageHeight}`}
                 preserveAspectRatio="none"
                 role="img"
-                aria-label={`Podgląd strony ${currentPage.pageNumber}: zaznacz moduły, aby powiązać artykuł`}
+                aria-label={`Podgląd strony ${currentPage.pageNumber}: zaznacz moduły lub przeciągnij powiązanie`}
                 style={{ cursor: "crosshair", touchAction: "none" }}
                 onPointerDown={handleSvgPointerDown}
                 onPointerMove={handleSvgPointerMove}
@@ -484,14 +760,29 @@ export default function PagePreview({
                 })}
 
                 {bindings.map((binding, index) => {
-                  const rect = rectFromCoordinates(binding.coordinates);
+                  const sourceCoordinates = bindingCoordinates(binding);
+                  const edit =
+                    bindingEdit?.bindingId === binding.id
+                      ? bindingEdit.draftSelection
+                      : null;
+                  const displaySelection =
+                    edit ??
+                    moduleSelectionFromCoordinates(layout, sourceCoordinates);
+                  const coordinates = displaySelection
+                    ? coordinatesFromModuleSelection(layout, displaySelection)
+                    : sourceCoordinates;
+                  if (!coordinates) return null;
+
+                  const rect = rectFromCoordinates(coordinates);
                   const article = articleById.get(binding.articleId);
                   const focused = focusedBindingId === binding.id;
                   const fill = bindingColor(index);
                   const rawTitle = article?.title?.trim() || "Artykuł";
                   const maxChars = Math.max(
                     8,
-                    Math.floor((rect.width - labelPadX * 2) / (labelFontSize * 0.55)),
+                    Math.floor(
+                      (rect.width - labelPadX * 2) / (labelFontSize * 0.55),
+                    ),
                   );
                   const title =
                     rawTitle.length > maxChars
@@ -504,8 +795,12 @@ export default function PagePreview({
                   const labelHeight = labelLineHeight + labelPadY * 2;
                   const labelX = rect.x + labelPadX * 0.5;
                   const labelY = rect.y + labelPadY * 0.5;
+                  const bounds = displaySelection
+                    ? normalizeModuleSelection(displaySelection)
+                    : null;
+
                   return (
-                    <g key={binding.id} style={{ pointerEvents: "none" }}>
+                    <g key={binding.id}>
                       <rect
                         x={rect.x}
                         y={rect.y}
@@ -516,14 +811,40 @@ export default function PagePreview({
                           focused ? SELECTION_STROKE : "rgba(40,32,20,0.45)"
                         }
                         strokeWidth={focused ? strokeWidth * 2 : strokeWidth}
+                        style={{ cursor: focused ? "move" : "pointer" }}
+                        onPointerDown={(event) => {
+                          if (event.button !== 0) return;
+                          const cell = pointToModuleCell(
+                            event.clientX,
+                            event.clientY,
+                          );
+                          if (!cell || !bounds) {
+                            focusBinding(binding.id);
+                            event.stopPropagation();
+                            return;
+                          }
+                          beginBindingEdit(event, binding.id, {
+                            type: "move",
+                            origin: {
+                              col: cell.col,
+                              row: cell.row,
+                            },
+                          });
+                        }}
+                        onPointerMove={handleBindingPointerMove}
+                        onPointerUp={endBindingEdit}
+                        onPointerCancel={endBindingEdit}
                       />
                       {rect.width > 0 && rect.height > 0 ? (
-                        <g>
+                        <g style={{ pointerEvents: "none" }}>
                           <rect
                             x={labelX}
                             y={labelY}
                             width={Math.max(labelWidth, labelFontSize * 2)}
-                            height={Math.min(labelHeight, rect.height - labelPadY)}
+                            height={Math.min(
+                              labelHeight,
+                              rect.height - labelPadY,
+                            )}
                             rx={labelFontSize * 0.2}
                             ry={labelFontSize * 0.2}
                             fill="rgba(255, 252, 247, 0.94)"
@@ -541,6 +862,48 @@ export default function PagePreview({
                           </text>
                         </g>
                       ) : null}
+
+                      {focused
+                        ? RESIZE_HANDLES.map((handle) => {
+                            const onLeft = handle.includes("w");
+                            const onRight = handle.includes("e");
+                            const onTop = handle.includes("n");
+                            const onBottom = handle.includes("s");
+                            const cx = onLeft
+                              ? rect.x
+                              : onRight
+                                ? rect.x + rect.width
+                                : rect.x + rect.width / 2;
+                            const cy = onTop
+                              ? rect.y
+                              : onBottom
+                                ? rect.y + rect.height
+                                : rect.y + rect.height / 2;
+                            return (
+                              <rect
+                                key={handle}
+                                x={cx - handleSize / 2}
+                                y={cy - handleSize / 2}
+                                width={handleSize}
+                                height={handleSize}
+                                fill={HANDLE_FILL}
+                                stroke="#fff"
+                                strokeWidth={strokeWidth * 0.8}
+                                style={{ cursor: cursorForHandle(handle) }}
+                                onPointerDown={(event) => {
+                                  if (event.button !== 0) return;
+                                  beginBindingEdit(event, binding.id, {
+                                    type: "resize",
+                                    handle,
+                                  });
+                                }}
+                                onPointerMove={handleBindingPointerMove}
+                                onPointerUp={endBindingEdit}
+                                onPointerCancel={endBindingEdit}
+                              />
+                            );
+                          })
+                        : null}
                     </g>
                   );
                 })}
@@ -572,7 +935,7 @@ export default function PagePreview({
             onBindArticle={bindArticle}
             onCreateArticle={createAndBindArticle}
             onDeleteBinding={removeBinding}
-            onFocusBinding={setFocusedBindingId}
+            onFocusBinding={focusBinding}
           />
         </Paper>
       </Box>

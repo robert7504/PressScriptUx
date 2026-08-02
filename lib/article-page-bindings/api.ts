@@ -4,6 +4,7 @@ import { apiFetch } from "../api/client";
 import type {
   ArticlePageBinding,
   ArticlePageBindingCreateInput,
+  ArticlePageBindingUpdateInput,
 } from "./types";
 
 export type ListArticlePageBindingsParams = {
@@ -30,6 +31,16 @@ export async function createArticlePageBinding(
 ) {
   return apiFetch<ArticlePageBinding>("/article-page-bindings", {
     method: "POST",
+    body: input,
+  });
+}
+
+export async function updateArticlePageBinding(
+  id: string,
+  input: ArticlePageBindingUpdateInput,
+) {
+  return apiFetch<ArticlePageBinding>(`/article-page-bindings/${id}`, {
+    method: "PUT",
     body: input,
   });
 }
