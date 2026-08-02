@@ -2,15 +2,21 @@ This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-
 
 ## Getting Started
 
-### Docker Compose
+### Docker Compose (development, hot reload)
 
 ```bash
 docker compose up --build
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000) with your browser to see the result. Source files are mounted into the container, so edits (e.g. `app/page.tsx`) refresh automatically.
 
 Stop with `Ctrl+C`, or run in the background with `docker compose up --build -d`.
+
+### Docker Compose (production)
+
+```bash
+docker compose -f docker-compose.prod.yml up --build
+```
 
 ### Local development
 
