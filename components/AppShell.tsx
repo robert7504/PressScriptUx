@@ -2,11 +2,18 @@
 
 import ChevronLeftIcon from "@mui/icons-material/ChevronLeft";
 import ChevronRightIcon from "@mui/icons-material/ChevronRight";
+import ArticleIcon from "@mui/icons-material/Article";
+import BusinessIcon from "@mui/icons-material/Business";
 import DashboardIcon from "@mui/icons-material/Dashboard";
-import DescriptionIcon from "@mui/icons-material/Description";
+import DashboardCustomizeIcon from "@mui/icons-material/DashboardCustomize";
+import FormatSizeIcon from "@mui/icons-material/FormatSize";
 import LogoutIcon from "@mui/icons-material/Logout";
+import MenuBookIcon from "@mui/icons-material/MenuBook";
 import MenuIcon from "@mui/icons-material/Menu";
+import NewspaperIcon from "@mui/icons-material/Newspaper";
 import SettingsIcon from "@mui/icons-material/Settings";
+import TuneIcon from "@mui/icons-material/Tune";
+import ViewAgendaIcon from "@mui/icons-material/ViewAgenda";
 import Box from "@mui/material/Box";
 import Divider from "@mui/material/Divider";
 import Drawer from "@mui/material/Drawer";
@@ -23,6 +30,7 @@ import { usePathname } from "next/navigation";
 import { useState } from "react";
 import { logout } from "@/app/actions/auth";
 import type { AuthUser } from "@/lib/auth/types";
+import ApiDebugPanel from "./ApiDebugPanel";
 import Link from "./Link";
 
 const DRAWER_WIDTH = 240;
@@ -32,8 +40,23 @@ type DesktopNavState = "expanded" | "mini" | "hidden";
 
 const navItems = [
   { label: "Dashboard", href: "/", icon: <DashboardIcon /> },
-  { label: "Scripts", href: "/scripts", icon: <DescriptionIcon /> },
-  { label: "Settings", href: "/settings", icon: <SettingsIcon /> },
+  { label: "Artykuły", href: "/articles", icon: <ArticleIcon /> },
+  { label: "Wydawcy", href: "/publishers", icon: <BusinessIcon /> },
+  { label: "Magazyny", href: "/magazines", icon: <MenuBookIcon /> },
+  { label: "Wydania", href: "/issues", icon: <NewspaperIcon /> },
+  { label: "Grzbiety", href: "/sections", icon: <ViewAgendaIcon /> },
+  { label: "Konfiguracje", href: "/configurations", icon: <TuneIcon /> },
+  {
+    label: "Wzorce stron",
+    href: "/page-templates",
+    icon: <DashboardCustomizeIcon />,
+  },
+  {
+    label: "Style akapitowe",
+    href: "/paragraph-styles",
+    icon: <FormatSizeIcon />,
+  },
+  { label: "Ustawienia", href: "/settings", icon: <SettingsIcon /> },
 ] as const;
 
 function NavList({
@@ -229,9 +252,11 @@ function DrawerFooter({
 export default function AppShell({
   children,
   user,
+  apiDebug = false,
 }: {
   children: React.ReactNode;
   user: AuthUser | null;
+  apiDebug?: boolean;
 }) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [desktopNav, setDesktopNav] = useState<DesktopNavState>("expanded");
@@ -269,7 +294,7 @@ export default function AppShell({
   };
 
   return (
-    <Box sx={{ display: "flex", minHeight: "100%" }}>
+    <Box sx={{ display: "flex", width: "100%", minHeight: "100%" }}>
       <Box
         component="nav"
         sx={{
@@ -360,7 +385,10 @@ export default function AppShell({
           width: {
             md: desktopOpen ? `calc(100% - ${desktopWidth}px)` : "100%",
           },
+          minWidth: 0,
           minHeight: "100%",
+          bgcolor: "background.default",
+          color: "text.primary",
           transition: (theme) =>
             theme.transitions.create("width", {
               easing: theme.transitions.easing.sharp,
@@ -402,6 +430,7 @@ export default function AppShell({
         </Toolbar>
         <Box sx={{ p: 3 }}>{children}</Box>
       </Box>
+      {apiDebug ? <ApiDebugPanel /> : null}
     </Box>
   );
 }

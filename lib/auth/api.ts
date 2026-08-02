@@ -1,5 +1,6 @@
 import "server-only";
 
+import { logApiRequest } from "../api/debug";
 import { getApiBaseUrl } from "../config";
 import type { LoginResponse } from "./types";
 
@@ -14,33 +15,63 @@ export class AuthApiError extends Error {
 }
 
 export async function loginRequest(email: string, password: string) {
-  const response = await fetch(`${getApiBaseUrl()}/auth/login`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Accept: "application/json",
-    },
-    body: JSON.stringify({ email, password }),
-    cache: "no-store",
-  });
+  const method = "POST";
+  const url = `${getApiBaseUrl()}/auth/login`;
+  const headers = {
+    "Content-Type": "application/json",
+    Accept: "application/json",
+  };
+  const serializedBody = JSON.stringify({ email, password });
+  const startedAt = Date.now();
 
-  let data: Partial<LoginResponse> & { error?: string; message?: string } = {};
+  const log = (extra: { status?: number; error?: string }) => {
+    logApiRequest({
+      method,
+      url,
+      headers,
+      body: serializedBody,
+      durationMs: Date.now() - startedAt,
+      ...extra,
+    });
+  };
+
   try {
-    data = (await response.json()) as typeof data;
-  } catch {
-    // Backend may return empty body on some errors.
-  }
+    const response = await fetch(url, {
+      method,
+      headers,
+      body: serializedBody,
+      cache: "no-store",
+    });
 
-  if (!response.ok) {
-    throw new AuthApiError(
-      data.error || data.message || "Invalid email or password",
-      response.status,
-    );
-  }
+    let data: Partial<LoginResponse> & { error?: string; message?: string } = {};
+    try {
+      data = (await response.json()) as typeof data;
+    } catch {
+      // Backend may return empty body on some errors.
+    }
 
-  if (!data.accessToken || !data.user) {
-    throw new AuthApiError("Unexpected login response from API", 500);
-  }
+    if (!response.ok) {
+      const message = data.error || data.message || "Invalid email or password";
+      log({ status: response.status, error: message });
+      throw new AuthApiError(message, response.status);
+    }
 
-  return data as LoginResponse;
+    if (!data.accessToken || !data.user) {
+      const message = "Unexpected login response from API";
+      log({ status: 500, error: message });
+      throw new AuthApiError(message, 500);
+    }
+
+    log({ status: response.status });
+    return data as LoginResponse;
+  } catch (error) {
+    if (error instanceof AuthApiError) {
+      throw error;
+    }
+
+    const message =
+      error instanceof Error ? error.message : "Network request failed";
+    log({ error: message });
+    throw error;
+  }
 }

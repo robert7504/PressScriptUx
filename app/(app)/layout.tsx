@@ -1,4 +1,5 @@
 import AppShell from "@/components/AppShell";
+import { isApiDebugEnabled } from "@/lib/api/debug";
 import { getSessionUser } from "@/lib/auth/session";
 
 export default async function AppLayout({
@@ -8,5 +9,9 @@ export default async function AppLayout({
 }) {
   const user = await getSessionUser();
 
-  return <AppShell user={user}>{children}</AppShell>;
+  return (
+    <AppShell user={user} apiDebug={isApiDebugEnabled()}>
+      {children}
+    </AppShell>
+  );
 }
