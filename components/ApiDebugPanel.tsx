@@ -1,5 +1,6 @@
 "use client";
 
+import BugReportOutlinedIcon from "@mui/icons-material/BugReportOutlined";
 import ContentCopyIcon from "@mui/icons-material/ContentCopy";
 import DeleteOutlinedIcon from "@mui/icons-material/DeleteOutlined";
 import ExpandLessIcon from "@mui/icons-material/ExpandLess";
@@ -8,6 +9,7 @@ import HttpIcon from "@mui/icons-material/Http";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import Chip from "@mui/material/Chip";
+import Collapse from "@mui/material/Collapse";
 import IconButton from "@mui/material/IconButton";
 import Paper from "@mui/material/Paper";
 import Stack from "@mui/material/Stack";
@@ -23,8 +25,11 @@ type ApiDebugEvent = {
   status?: number;
   durationMs: number;
   error?: string;
+  responseBody?: string;
   curl: string;
 };
+
+type CopiedKind = "curl" | "error";
 
 function statusColor(status?: number): "default" | "success" | "warning" | "error" {
   if (status == null) return "error";
@@ -33,10 +38,28 @@ function statusColor(status?: number): "default" | "success" | "warning" | "erro
   return "warning";
 }
 
+function formatErrorPayload(event: ApiDebugEvent) {
+  if (event.responseBody) {
+    try {
+      return JSON.stringify(JSON.parse(event.responseBody), null, 2);
+    } catch {
+      return event.responseBody;
+    }
+  }
+  return event.error ?? "";
+}
+
+function hasErrorDetails(event: ApiDebugEvent) {
+  return Boolean(event.error || event.responseBody || event.status == null || (event.status != null && event.status >= 400));
+}
+
 export default function ApiDebugPanel() {
   const [open, setOpen] = useState(false);
   const [events, setEvents] = useState<ApiDebugEvent[]>([]);
-  const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [copied, setCopied] = useState<{ id: string; kind: CopiedKind } | null>(
+    null,
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -65,15 +88,37 @@ export default function ApiDebugPanel() {
     };
   }, []);
 
+  const markCopied = (id: string, kind: CopiedKind) => {
+    setCopied({ id, kind });
+    window.setTimeout(
+      () =>
+        setCopied((current) =>
+          current?.id === id && current.kind === kind ? null : current,
+        ),
+      1500,
+    );
+  };
+
   const copyCurl = async (event: ApiDebugEvent) => {
     await navigator.clipboard.writeText(event.curl);
-    setCopiedId(event.id);
-    window.setTimeout(() => setCopiedId((id) => (id === event.id ? null : id)), 1500);
+    markCopied(event.id, "curl");
+  };
+
+  const copyError = async (event: ApiDebugEvent) => {
+    const payload = formatErrorPayload(event);
+    if (!payload) return;
+    await navigator.clipboard.writeText(payload);
+    markCopied(event.id, "error");
   };
 
   const clearEvents = async () => {
     await fetch("/api/debug/requests", { method: "DELETE" });
     setEvents([]);
+    setExpandedId(null);
+  };
+
+  const toggleExpanded = (id: string) => {
+    setExpandedId((current) => (current === id ? null : id));
   };
 
   return (
@@ -83,12 +128,12 @@ export default function ApiDebugPanel() {
         right: 16,
         bottom: 16,
         zIndex: (theme) => theme.zIndex.modal + 1,
-        width: open ? { xs: "calc(100vw - 32px)", sm: 520 } : "auto",
+        width: open ? { xs: "calc(100vw - 32px)", sm: 560 } : "auto",
         maxWidth: "calc(100vw - 32px)",
       }}
     >
       {!open ? (
-        <Tooltip title="API debug (copy curl)">
+        <Tooltip title="API debug (curl + errors)">
           <Button
             variant="contained"
             color="secondary"
@@ -130,64 +175,172 @@ export default function ApiDebugPanel() {
             </IconButton>
           </Stack>
 
-          <Box sx={{ maxHeight: 360, overflow: "auto" }}>
+          <Box sx={{ maxHeight: 420, overflow: "auto" }}>
             {events.length === 0 ? (
               <Typography variant="body2" color="text.secondary" sx={{ p: 2 }}>
                 Brak requestów. Przejdź po appce, pojawią się tutaj.
               </Typography>
             ) : (
-              events.map((event) => (
-                <Box
-                  key={event.id}
-                  sx={{
-                    px: 1.5,
-                    py: 1,
-                    borderBottom: 1,
-                    borderColor: "divider",
-                    "&:hover": { bgcolor: "action.hover" },
-                  }}
-                >
-                  <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
-                    <Chip size="small" label={event.method} />
-                    <Chip
-                      size="small"
-                      color={statusColor(event.status)}
-                      label={event.status ?? "ERR"}
-                    />
-                    <Typography variant="caption" color="text.secondary">
-                      {event.durationMs}ms
-                    </Typography>
-                    <Box sx={{ flex: 1 }} />
-                    <Tooltip
-                      title={copiedId === event.id ? "Skopiowano" : "Copy as cURL"}
-                    >
-                      <IconButton
-                        size="small"
-                        onClick={() => void copyCurl(event)}
-                        aria-label="copy curl"
-                      >
-                        <ContentCopyIcon fontSize="small" />
-                      </IconButton>
-                    </Tooltip>
-                  </Stack>
-                  <Typography
-                    variant="body2"
+              events.map((event) => {
+                const errored = hasErrorDetails(event);
+                const expanded = expandedId === event.id;
+                const errorPayload = formatErrorPayload(event);
+                const copiedCurl =
+                  copied?.id === event.id && copied.kind === "curl";
+                const copiedError =
+                  copied?.id === event.id && copied.kind === "error";
+
+                return (
+                  <Box
+                    key={event.id}
                     sx={{
-                      mt: 0.5,
-                      fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-                      fontSize: 12,
-                      wordBreak: "break-all",
+                      px: 1.5,
+                      py: 1,
+                      borderBottom: 1,
+                      borderColor: "divider",
+                      "&:hover": { bgcolor: "action.hover" },
                     }}
                   >
-                    {event.url}
-                  </Typography>
-                  {event.error ? (
-                    <Typography variant="caption" color="error">
-                      {event.error}
+                    <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
+                      <Chip size="small" label={event.method} />
+                      <Chip
+                        size="small"
+                        color={statusColor(event.status)}
+                        label={event.status ?? "ERR"}
+                      />
+                      <Typography variant="caption" color="text.secondary">
+                        {event.durationMs}ms
+                      </Typography>
+                      <Box sx={{ flex: 1 }} />
+                      {errored ? (
+                        <Tooltip
+                          title={
+                            expanded ? "Ukryj błąd" : "Podejrzyj błąd"
+                          }
+                        >
+                          <IconButton
+                            size="small"
+                            onClick={() => toggleExpanded(event.id)}
+                            aria-label="toggle error details"
+                            color={expanded ? "error" : "default"}
+                          >
+                            <BugReportOutlinedIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
+                      ) : null}
+                      {errored && errorPayload ? (
+                        <Tooltip
+                          title={
+                            copiedError ? "Skopiowano błąd" : "Copy error"
+                          }
+                        >
+                          <IconButton
+                            size="small"
+                            onClick={() => void copyError(event)}
+                            aria-label="copy error"
+                          >
+                            <ContentCopyIcon fontSize="small" color="error" />
+                          </IconButton>
+                        </Tooltip>
+                      ) : null}
+                      <Tooltip
+                        title={copiedCurl ? "Skopiowano" : "Copy as cURL"}
+                      >
+                        <IconButton
+                          size="small"
+                          onClick={() => void copyCurl(event)}
+                          aria-label="copy curl"
+                        >
+                          <ContentCopyIcon fontSize="small" />
+                        </IconButton>
+                      </Tooltip>
+                    </Stack>
+                    <Typography
+                      variant="body2"
+                      sx={{
+                        mt: 0.5,
+                        fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+                        fontSize: 12,
+                        wordBreak: "break-all",
+                      }}
+                    >
+                      {event.url}
                     </Typography>
-                  ) : null}
-                </Box>
-              ))
+                    {event.error && !expanded ? (
+                      <Typography
+                        variant="caption"
+                        color="error"
+                        sx={{
+                          display: "block",
+                          mt: 0.25,
+                          cursor: "pointer",
+                        }}
+                        onClick={() => toggleExpanded(event.id)}
+                      >
+                        {event.error}
+                      </Typography>
+                    ) : null}
+                    <Collapse in={expanded}>
+                      <Box
+                        sx={{
+                          mt: 1,
+                          p: 1,
+                          borderRadius: 1,
+                          bgcolor: (theme) =>
+                            theme.palette.mode === "dark"
+                              ? "rgba(244, 67, 54, 0.12)"
+                              : "rgba(244, 67, 54, 0.06)",
+                          border: 1,
+                          borderColor: "error.light",
+                        }}
+                      >
+                        <Stack
+                          direction="row"
+                          spacing={1}
+                          sx={{ alignItems: "center", mb: 0.5 }}
+                        >
+                          <Typography
+                            variant="caption"
+                            color="error"
+                            sx={{ fontWeight: 600, flex: 1 }}
+                          >
+                            {event.error ?? "Error response"}
+                          </Typography>
+                          {errorPayload ? (
+                            <Button
+                              size="small"
+                              color="error"
+                              startIcon={<ContentCopyIcon />}
+                              onClick={() => void copyError(event)}
+                            >
+                              {copiedError ? "Skopiowano" : "Copy error"}
+                            </Button>
+                          ) : null}
+                        </Stack>
+                        <Box
+                          component="pre"
+                          sx={{
+                            m: 0,
+                            p: 1,
+                            maxHeight: 180,
+                            overflow: "auto",
+                            borderRadius: 1,
+                            bgcolor: "background.paper",
+                            fontFamily:
+                              "ui-monospace, SFMono-Regular, Menlo, monospace",
+                            fontSize: 11,
+                            whiteSpace: "pre-wrap",
+                            wordBreak: "break-word",
+                            userSelect: "text",
+                          }}
+                        >
+                          {errorPayload || "Brak body odpowiedzi."}
+                        </Box>
+                      </Box>
+                    </Collapse>
+                  </Box>
+                );
+              })
             )}
           </Box>
 
@@ -202,7 +355,8 @@ export default function ApiDebugPanel() {
           >
             <ExpandLessIcon fontSize="small" sx={{ mr: 0.5, opacity: 0.6 }} />
             <Typography variant="caption" color="text.secondary">
-              Copy as cURL → wklej w Postmanie (Import → Raw text)
+              Bug icon → podgląd błędu · czerwony copy → error · szary copy →
+              cURL
             </Typography>
           </Stack>
         </Paper>

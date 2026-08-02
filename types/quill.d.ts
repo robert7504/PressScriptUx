@@ -21,9 +21,15 @@ declare module "quill" {
       dangerouslyPasteHTML(html: string): void;
     };
 
-    on(eventName: "text-change" | "selection-change" | "editor-change", handler: () => void): void;
+    on(
+      eventName: "text-change" | "selection-change" | "editor-change",
+      handler: () => void,
+    ): void;
     enable(enabled?: boolean): void;
     disable(): void;
+    format(name: string, value: unknown): void;
+    getFormat(range?: unknown): Record<string, unknown>;
+    getSelection(focus?: boolean): { index: number; length: number } | null;
     getText(): string;
     getSemanticHTML(): string;
   }

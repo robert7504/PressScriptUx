@@ -10,6 +10,7 @@ export type ApiDebugEventRecord = {
   status?: number;
   durationMs: number;
   error?: string;
+  responseBody?: string;
   curl: string;
   body?: string;
 };
@@ -20,6 +21,7 @@ type ApiDebugEvent = {
   status?: number;
   durationMs: number;
   error?: string;
+  responseBody?: string;
   headers?: Headers | Record<string, string>;
   body?: string;
 };
@@ -102,6 +104,7 @@ export function logApiRequest(event: ApiDebugEvent) {
     status: event.status,
     durationMs: event.durationMs,
     error: event.error,
+    responseBody: event.responseBody,
     curl,
     body: event.body,
   };

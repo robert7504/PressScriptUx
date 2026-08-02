@@ -12,6 +12,8 @@ import type {
 } from "@/lib/article-page-bindings/types";
 import { createArticle } from "@/lib/articles/api";
 import { getAccessToken } from "@/lib/auth/session";
+import { getIssue } from "@/lib/issues/api";
+import { getSection } from "@/lib/sections/api";
 
 const PLACEHOLDER_CONTENT = "<p>Treść do uzupełnienia.</p>";
 
@@ -105,7 +107,10 @@ export async function createArticleAndBindAction(input: {
   }
 
   try {
+    const section = await getSection(sectionId);
+    const issue = await getIssue(section.issueId);
     const article = await createArticle({
+      magazineId: issue.magazineId,
       title,
       content: PLACEHOLDER_CONTENT,
       kicker: emptyToNull(input.kicker ?? ""),

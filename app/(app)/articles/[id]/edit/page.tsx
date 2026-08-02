@@ -5,10 +5,16 @@ import Typography from "@mui/material/Typography";
 import { notFound } from "next/navigation";
 import { updateArticleAction } from "@/app/actions/articles";
 import ArticleForm from "@/components/articles/ArticleForm";
+import ArticleImagesPanel from "@/components/articles/ArticleImagesPanel";
 import Link from "@/components/Link";
 import { ApiError } from "@/lib/api/client";
-import { getArticle } from "@/lib/articles/api";
-import type { Article } from "@/lib/articles/types";
+import { getArticle, listArticleImages } from "@/lib/articles/api";
+import type { Article, ArticleImage } from "@/lib/articles/types";
+import { listIssues } from "@/lib/issues/api";
+import type { Issue } from "@/lib/issues/types";
+import { listMagazineImages } from "@/lib/magazine-images/api";
+import { listMagazines } from "@/lib/magazines/api";
+import type { Magazine } from "@/lib/magazines/types";
 import { safeReturnTo } from "@/lib/navigation/returnTo";
 import { listSections } from "@/lib/sections/api";
 import type { Section } from "@/lib/sections/types";
@@ -42,11 +48,43 @@ export default async function EditArticlePage({
     );
   }
 
+  let magazines: Magazine[] = [];
+  let issues: Issue[] = [];
   let sections: Section[] = [];
+  let images: ArticleImage[] = [];
+  let poolImages: ArticleImage[] = [];
+  let imagesError: string | null = null;
+  let poolError: string | null = null;
   try {
-    sections = await listSections({ active: true });
+    [magazines, issues, sections] = await Promise.all([
+      listMagazines({ active: true }),
+      listIssues({ active: true }),
+      listSections({ active: true }),
+    ]);
   } catch {
+    magazines = [];
+    issues = [];
     sections = [];
+  }
+
+  try {
+    images = await listArticleImages(article.id);
+  } catch (error) {
+    imagesError =
+      error instanceof ApiError
+        ? error.message
+        : "Nie udało się pobrać zdjęć artykułu.";
+  }
+
+  try {
+    poolImages = await listMagazineImages(article.magazineId, {
+      unassignedOnly: true,
+    });
+  } catch (error) {
+    poolError =
+      error instanceof ApiError
+        ? error.message
+        : "Nie udało się pobrać puli zdjęć magazynu.";
   }
 
   const boundUpdate = updateArticleAction.bind(null, article.id);
@@ -76,12 +114,27 @@ export default async function EditArticlePage({
       <ArticleForm
         action={boundUpdate}
         article={article}
+        magazines={magazines}
+        issues={issues}
         sections={sections}
         submitLabel="Zapisz zmiany"
         cancelHref={returnTo ?? "/articles"}
         cancelLabel={returnTo ? backLabel : "Anuluj"}
         returnTo={returnTo ?? undefined}
       />
+      {imagesError ? (
+        <Alert severity="warning" sx={{ mt: 3, maxWidth: 880 }}>
+          {imagesError}
+        </Alert>
+      ) : (
+        <ArticleImagesPanel
+          articleId={article.id}
+          magazineId={article.magazineId}
+          images={images}
+          poolImages={poolImages}
+          poolError={poolError}
+        />
+      )}
     </>
   );
 }

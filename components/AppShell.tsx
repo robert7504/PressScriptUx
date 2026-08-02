@@ -6,15 +6,20 @@ import ArticleIcon from "@mui/icons-material/Article";
 import BusinessIcon from "@mui/icons-material/Business";
 import DashboardIcon from "@mui/icons-material/Dashboard";
 import DashboardCustomizeIcon from "@mui/icons-material/DashboardCustomize";
+import ExpandLessIcon from "@mui/icons-material/ExpandLess";
+import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import FormatSizeIcon from "@mui/icons-material/FormatSize";
 import LogoutIcon from "@mui/icons-material/Logout";
 import MenuBookIcon from "@mui/icons-material/MenuBook";
 import MenuIcon from "@mui/icons-material/Menu";
+import ImageIcon from "@mui/icons-material/Image";
 import NewspaperIcon from "@mui/icons-material/Newspaper";
 import SettingsIcon from "@mui/icons-material/Settings";
+import SportsEsportsIcon from "@mui/icons-material/SportsEsports";
 import TuneIcon from "@mui/icons-material/Tune";
 import ViewAgendaIcon from "@mui/icons-material/ViewAgenda";
 import Box from "@mui/material/Box";
+import Collapse from "@mui/material/Collapse";
 import Divider from "@mui/material/Divider";
 import Drawer from "@mui/material/Drawer";
 import IconButton from "@mui/material/IconButton";
@@ -38,7 +43,19 @@ const DRAWER_WIDTH_MINI = 72;
 
 type DesktopNavState = "expanded" | "mini" | "hidden";
 
-const navItems = [
+type NavChild = {
+  label: string;
+  href: string;
+};
+
+type NavItem = {
+  label: string;
+  href?: string;
+  icon: React.ReactNode;
+  children?: NavChild[];
+};
+
+const navItems: NavItem[] = [
   { label: "Dashboard", href: "/", icon: <DashboardIcon /> },
   { label: "Artykuły", href: "/articles", icon: <ArticleIcon /> },
   { label: "Wydawcy", href: "/publishers", icon: <BusinessIcon /> },
@@ -56,8 +73,14 @@ const navItems = [
     href: "/paragraph-styles",
     icon: <FormatSizeIcon />,
   },
+  { label: "Zdjęcia", href: "/images", icon: <ImageIcon /> },
+  { label: "Tetris", href: "/games/tetris", icon: <SportsEsportsIcon /> },
   { label: "Ustawienia", href: "/settings", icon: <SettingsIcon /> },
-] as const;
+];
+
+function isPathSelected(pathname: string, href: string) {
+  return href === "/" ? pathname === "/" : pathname.startsWith(href);
+}
 
 function NavList({
   onNavigate,
@@ -67,19 +90,103 @@ function NavList({
   mini?: boolean;
 }) {
   const pathname = usePathname();
+  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>(() => {
+    const initial: Record<string, boolean> = {};
+    for (const item of navItems) {
+      if (item.children?.some((child) => isPathSelected(pathname, child.href))) {
+        initial[item.label] = true;
+      }
+    }
+    return initial;
+  });
+
+  const toggleGroup = (label: string) => {
+    setOpenGroups((prev) => ({ ...prev, [label]: !prev[label] }));
+  };
 
   return (
     <List>
       {navItems.map((item) => {
-        const selected =
-          item.href === "/"
-            ? pathname === "/"
-            : pathname.startsWith(item.href);
+        if (item.children) {
+          const childSelected = item.children.some((child) =>
+            isPathSelected(pathname, child.href),
+          );
+          const open = openGroups[item.label] ?? childSelected;
+
+          if (mini) {
+            const firstChild = item.children[0];
+            const button = (
+              <ListItemButton
+                component={Link}
+                href={firstChild.href}
+                selected={childSelected}
+                onClick={onNavigate}
+                sx={{
+                  minHeight: 48,
+                  justifyContent: "center",
+                  px: 1.5,
+                }}
+              >
+                <ListItemIcon
+                  sx={{
+                    minWidth: 0,
+                    justifyContent: "center",
+                  }}
+                >
+                  {item.icon}
+                </ListItemIcon>
+              </ListItemButton>
+            );
+
+            return (
+              <ListItem key={item.label} disablePadding sx={{ display: "block" }}>
+                <Tooltip title={`${item.label} / ${firstChild.label}`} placement="right">
+                  {button}
+                </Tooltip>
+              </ListItem>
+            );
+          }
+
+          return (
+            <Box key={item.label} component="li" sx={{ display: "block" }}>
+              <ListItemButton
+                selected={childSelected}
+                onClick={() => toggleGroup(item.label)}
+                sx={{ minHeight: 48, px: 2.5 }}
+              >
+                <ListItemIcon sx={{ minWidth: 0, mr: 2, justifyContent: "center" }}>
+                  {item.icon}
+                </ListItemIcon>
+                <ListItemText primary={item.label} />
+                {open ? <ExpandLessIcon /> : <ExpandMoreIcon />}
+              </ListItemButton>
+              <Collapse in={open} timeout="auto" unmountOnExit>
+                <List component="div" disablePadding>
+                  {item.children.map((child) => (
+                    <ListItemButton
+                      key={child.href}
+                      component={Link}
+                      href={child.href}
+                      selected={isPathSelected(pathname, child.href)}
+                      onClick={onNavigate}
+                      sx={{ minHeight: 44, pl: 6.5, pr: 2.5 }}
+                    >
+                      <ListItemText primary={child.label} />
+                    </ListItemButton>
+                  ))}
+                </List>
+              </Collapse>
+            </Box>
+          );
+        }
+
+        const href = item.href!;
+        const selected = isPathSelected(pathname, href);
 
         const button = (
           <ListItemButton
             component={Link}
-            href={item.href}
+            href={href}
             selected={selected}
             onClick={onNavigate}
             sx={{
@@ -115,7 +222,7 @@ function NavList({
         );
 
         return (
-          <ListItem key={item.href} disablePadding sx={{ display: "block" }}>
+          <ListItem key={href} disablePadding sx={{ display: "block" }}>
             {mini ? (
               <Tooltip title={item.label} placement="right">
                 {button}

@@ -6,6 +6,7 @@ import { listArticlePageBindings } from "@/lib/article-page-bindings/api";
 import type { ArticlePageBinding } from "@/lib/article-page-bindings/types";
 import { listArticles } from "@/lib/articles/api";
 import type { Article } from "@/lib/articles/types";
+import { getIssue } from "@/lib/issues/api";
 import { sortPages } from "@/lib/pages/geometry";
 import { listPages } from "@/lib/pages/api";
 import type { Page } from "@/lib/pages/types";
@@ -57,9 +58,13 @@ export default async function SectionPagePreviewPage({
 
   let articles: Article[] = [];
   try {
-    // All active articles — binding is not limited to section membership.
-    // Section-linked articles are sorted first in the picker UI.
-    articles = await listArticles({ active: true });
+    // Articles from this magazine (pool + section-bound). Section-linked ones
+    // are sorted first in the picker UI.
+    const issue = await getIssue(section.issueId);
+    articles = await listArticles({
+      active: true,
+      magazineId: issue.magazineId,
+    });
   } catch {
     articles = [];
   }

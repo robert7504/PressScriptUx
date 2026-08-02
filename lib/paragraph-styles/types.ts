@@ -132,3 +132,10 @@ export type ParagraphStyleFormState = {
     sortOrder?: string;
   };
 };
+
+export type MagazineParagraphStylesResult = {
+  styles: ParagraphStyle[];
+  configurationId: string | null;
+  configurationName: string | null;
+  error?: string;
+};

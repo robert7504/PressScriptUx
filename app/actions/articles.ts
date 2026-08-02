@@ -13,7 +13,9 @@ import {
   type ArticleStatus,
 } from "@/lib/articles/types";
 import { getAccessToken } from "@/lib/auth/session";
+import { getIssue } from "@/lib/issues/api";
 import { safeReturnTo } from "@/lib/navigation/returnTo";
+import { getSection } from "@/lib/sections/api";
 
 function emptyToNull(value: string) {
   const trimmed = value.trim();
@@ -33,13 +35,50 @@ function parseSectionIds(formData: FormData) {
     .filter(Boolean);
 }
 
-function readArticleFields(formData: FormData) {
+async function resolveMagazineId(
+  magazineId: string,
+  sectionIdList: string[],
+): Promise<{ magazineId?: string; error?: string }> {
+  if (magazineId) {
+    return { magazineId };
+  }
+
+  if (sectionIdList.length === 0) {
+    return {};
+  }
+
+  try {
+    const magazineIds = new Set<string>();
+    for (const sectionId of sectionIdList) {
+      const section = await getSection(sectionId);
+      const issue = await getIssue(section.issueId);
+      magazineIds.add(issue.magazineId);
+    }
+
+    if (magazineIds.size > 1) {
+      return {
+        error: "Wybrane grzbiety należą do różnych magazynów.",
+      };
+    }
+
+    return { magazineId: [...magazineIds][0] };
+  } catch (error) {
+    if (error instanceof ApiError) {
+      return { error: error.message };
+    }
+    throw error;
+  }
+}
+
+async function readArticleFields(formData: FormData) {
   const title = String(formData.get("title") ?? "").trim();
   const content = String(formData.get("content") ?? "").trim();
   const plainContent = content
     .replace(/<[^>]*>/g, "")
     .replace(/&nbsp;/g, " ")
     .trim();
+  const magazineIdRaw = String(formData.get("magazineId") ?? "").trim();
+  const sectionIdList = parseSectionIds(formData);
 
   const fieldErrors: NonNullable<ArticleFormState["fieldErrors"]> = {};
   if (!title) {
@@ -48,10 +87,32 @@ function readArticleFields(formData: FormData) {
   if (!plainContent) {
     fieldErrors.content = "Treść jest wymagana";
   }
+  if (!magazineIdRaw && sectionIdList.length === 0) {
+    fieldErrors.binding =
+      "Przypisz artykuł do magazynu albo do grzbietu przed zapisem.";
+  }
+
+  if (Object.keys(fieldErrors).length > 0) {
+    return { fieldErrors };
+  }
+
+  const resolved = await resolveMagazineId(magazineIdRaw, sectionIdList);
+  if (resolved.error) {
+    return { fieldErrors: { binding: resolved.error } };
+  }
+  if (!resolved.magazineId) {
+    return {
+      fieldErrors: {
+        binding:
+          "Przypisz artykuł do magazynu albo do grzbietu przed zapisem.",
+      },
+    };
+  }
 
   return {
-    fieldErrors,
+    fieldErrors: {},
     payload: {
+      magazineId: resolved.magazineId,
       title,
       content,
       kicker: emptyToNull(String(formData.get("kicker") ?? "")),
@@ -60,7 +121,7 @@ function readArticleFields(formData: FormData) {
       byline: emptyToNull(String(formData.get("byline") ?? "")),
       notes: emptyToNull(String(formData.get("notes") ?? "")),
       status: parseStatus(String(formData.get("status") ?? "")),
-      sectionIdList: parseSectionIds(formData),
+      sectionIdList,
     },
   };
 }
@@ -80,8 +141,8 @@ export async function createArticleAction(
   const authError = await ensureAuthenticated();
   if (authError) return authError;
 
-  const { fieldErrors, payload } = readArticleFields(formData);
-  if (Object.keys(fieldErrors).length > 0) {
+  const { fieldErrors, payload } = await readArticleFields(formData);
+  if (!payload || Object.keys(fieldErrors).length > 0) {
     return { fieldErrors };
   }
 
@@ -108,8 +169,8 @@ export async function updateArticleAction(
   const authError = await ensureAuthenticated();
   if (authError) return authError;
 
-  const { fieldErrors, payload } = readArticleFields(formData);
-  if (Object.keys(fieldErrors).length > 0) {
+  const { fieldErrors, payload } = await readArticleFields(formData);
+  if (!payload || Object.keys(fieldErrors).length > 0) {
     return { fieldErrors };
   }
 

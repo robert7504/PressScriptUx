@@ -24,7 +24,11 @@ export async function loginRequest(email: string, password: string) {
   const serializedBody = JSON.stringify({ email, password });
   const startedAt = Date.now();
 
-  const log = (extra: { status?: number; error?: string }) => {
+  const log = (extra: {
+    status?: number;
+    error?: string;
+    responseBody?: string;
+  }) => {
     logApiRequest({
       method,
       url,
@@ -43,22 +47,34 @@ export async function loginRequest(email: string, password: string) {
       cache: "no-store",
     });
 
+    let responseText = "";
     let data: Partial<LoginResponse> & { error?: string; message?: string } = {};
     try {
-      data = (await response.json()) as typeof data;
+      responseText = await response.text();
+      data = responseText
+        ? (JSON.parse(responseText) as typeof data)
+        : {};
     } catch {
-      // Backend may return empty body on some errors.
+      // Backend may return empty or non-JSON body on some errors.
     }
 
     if (!response.ok) {
       const message = data.error || data.message || "Invalid email or password";
-      log({ status: response.status, error: message });
+      log({
+        status: response.status,
+        error: message,
+        responseBody: responseText || undefined,
+      });
       throw new AuthApiError(message, response.status);
     }
 
     if (!data.accessToken || !data.user) {
       const message = "Unexpected login response from API";
-      log({ status: 500, error: message });
+      log({
+        status: 500,
+        error: message,
+        responseBody: responseText || undefined,
+      });
       throw new AuthApiError(message, 500);
     }
 

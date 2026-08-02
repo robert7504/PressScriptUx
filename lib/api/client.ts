@@ -22,6 +22,10 @@ type ApiFetchOptions = Omit<RequestInit, "body"> & {
   >;
 };
 
+function isFormDataBody(body: unknown): body is FormData {
+  return typeof FormData !== "undefined" && body instanceof FormData;
+}
+
 function buildUrl(
   path: string,
   searchParams?: ApiFetchOptions["searchParams"],
@@ -49,7 +53,8 @@ export async function apiFetch<T>(
   const requestHeaders = new Headers(headers);
   requestHeaders.set("Accept", "application/json");
 
-  if (body !== undefined) {
+  const multipart = isFormDataBody(body);
+  if (body !== undefined && !multipart) {
     requestHeaders.set("Content-Type", "application/json");
   }
 
@@ -59,16 +64,27 @@ export async function apiFetch<T>(
 
   const method = (init.method ?? (body !== undefined ? "POST" : "GET")).toUpperCase();
   const url = buildUrl(path, searchParams);
-  const serializedBody =
-    body === undefined ? undefined : JSON.stringify(body);
+  const requestBody =
+    body === undefined
+      ? undefined
+      : multipart
+        ? body
+        : JSON.stringify(body);
+  const logBody = multipart
+    ? "(multipart form-data)"
+    : (requestBody as string | undefined);
   const startedAt = Date.now();
 
-  const log = (extra: { status?: number; error?: string }) => {
+  const log = (extra: {
+    status?: number;
+    error?: string;
+    responseBody?: string;
+  }) => {
     logApiRequest({
       method,
       url,
       headers: requestHeaders,
-      body: serializedBody,
+      body: logBody,
       durationMs: Date.now() - startedAt,
       ...extra,
     });
@@ -78,7 +94,7 @@ export async function apiFetch<T>(
     const response = await fetch(url, {
       ...init,
       headers: requestHeaders,
-      body: serializedBody,
+      body: requestBody,
       cache: "no-store",
     });
 
@@ -103,7 +119,11 @@ export async function apiFetch<T>(
         errorBody?.error ||
         errorBody?.message ||
         `Request failed (${response.status})`;
-      log({ status: response.status, error: message });
+      log({
+        status: response.status,
+        error: message,
+        responseBody: text || undefined,
+      });
       throw new ApiError(message, response.status);
     }
 
@@ -114,6 +134,71 @@ export async function apiFetch<T>(
       throw error;
     }
 
+    const message =
+      error instanceof Error ? error.message : "Network request failed";
+    log({ error: message });
+    throw error;
+  }
+}
+
+export async function apiFetchBinary(
+  path: string,
+  { searchParams, headers, ...init }: Omit<ApiFetchOptions, "body"> = {},
+): Promise<{ body: ArrayBuffer; contentType: string | null }> {
+  const token = await getAccessToken();
+  const requestHeaders = new Headers(headers);
+  if (token) {
+    requestHeaders.set("Authorization", `Bearer ${token}`);
+  }
+
+  const method = (init.method ?? "GET").toUpperCase();
+  const url = buildUrl(path, searchParams);
+  const startedAt = Date.now();
+
+  const log = (extra: { status?: number; error?: string }) => {
+    logApiRequest({
+      method,
+      url,
+      headers: requestHeaders,
+      durationMs: Date.now() - startedAt,
+      ...extra,
+    });
+  };
+
+  try {
+    const response = await fetch(url, {
+      ...init,
+      headers: requestHeaders,
+      cache: "no-store",
+    });
+
+    if (!response.ok) {
+      const text = await response.text();
+      let message = `Request failed (${response.status})`;
+      if (text) {
+        try {
+          const data = JSON.parse(text) as {
+            error?: string;
+            message?: string;
+          };
+          message = data.error || data.message || message;
+        } catch {
+          message = text;
+        }
+      }
+      log({ status: response.status, error: message });
+      throw new ApiError(message, response.status);
+    }
+
+    log({ status: response.status });
+    return {
+      body: await response.arrayBuffer(),
+      contentType: response.headers.get("Content-Type"),
+    };
+  } catch (error) {
+    if (error instanceof ApiError) {
+      throw error;
+    }
     const message =
       error instanceof Error ? error.message : "Network request failed";
     log({ error: message });

@@ -4,15 +4,20 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { ApiError } from "@/lib/api/client";
 import { getAccessToken } from "@/lib/auth/session";
+import { listMagazineConfigurations } from "@/lib/magazine-configurations/api";
+import type { MagazineConfiguration } from "@/lib/magazine-configurations/types";
 import {
   createParagraphStyle,
   deleteParagraphStyle,
+  listParagraphStyles,
   updateParagraphStyle,
 } from "@/lib/paragraph-styles/api";
+import { sortParagraphStyles } from "@/lib/paragraph-styles/editor";
 import {
   PARAGRAPH_STYLE_FONT_WEIGHTS,
   PARAGRAPH_STYLE_HTML_TAGS,
   PARAGRAPH_STYLE_TEXT_ALIGNS,
+  type MagazineParagraphStylesResult,
   type ParagraphStyleFontWeight,
   type ParagraphStyleFormState,
   type ParagraphStyleHtmlTag,
@@ -294,6 +299,77 @@ export async function deleteParagraphStyleAction(
   } catch (error) {
     if (error instanceof ApiError) {
       return { error: error.message };
+    }
+    throw error;
+  }
+}
+
+function pickTypographyConfiguration(configurations: MagazineConfiguration[]) {
+  return [...configurations]
+    .filter((item) => item.active && item.type === "TYPOGRAPHY")
+    .sort((a, b) => {
+      const priorityA = a.priority ?? Number.MIN_SAFE_INTEGER;
+      const priorityB = b.priority ?? Number.MIN_SAFE_INTEGER;
+      if (priorityA !== priorityB) return priorityB - priorityA;
+      return b.updatedAt.localeCompare(a.updatedAt);
+    })[0] ?? null;
+}
+
+export async function getParagraphStylesForMagazineAction(
+  magazineId: string,
+): Promise<MagazineParagraphStylesResult> {
+  const trimmedMagazineId = magazineId.trim();
+  if (!trimmedMagazineId) {
+    return {
+      styles: [],
+      configurationId: null,
+      configurationName: null,
+    };
+  }
+
+  const token = await getAccessToken();
+  if (!token) {
+    return {
+      styles: [],
+      configurationId: null,
+      configurationName: null,
+      error: "Sesja wygasła. Zaloguj się ponownie.",
+    };
+  }
+
+  try {
+    const configurations = await listMagazineConfigurations({
+      active: true,
+      type: "TYPOGRAPHY",
+      magazineId: trimmedMagazineId,
+    });
+    const configuration = pickTypographyConfiguration(configurations);
+    if (!configuration) {
+      return {
+        styles: [],
+        configurationId: null,
+        configurationName: null,
+      };
+    }
+
+    const styles = await listParagraphStyles({
+      active: true,
+      configurationId: configuration.id,
+    });
+
+    return {
+      styles: sortParagraphStyles(styles.filter((style) => style.active)),
+      configurationId: configuration.id,
+      configurationName: configuration.name,
+    };
+  } catch (error) {
+    if (error instanceof ApiError) {
+      return {
+        styles: [],
+        configurationId: null,
+        configurationName: null,
+        error: error.message,
+      };
     }
     throw error;
   }
