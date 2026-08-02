@@ -1,0 +1,16 @@
+Dockerfile
+docker-compose*.yml
+.dockerignore
+.git
+.gitignore
+.idea
+.next
+node_modules
+npm-debug.log*
+README.md
+AGENTS.md
+CLAUDE.md
+*.md
+.env*
+.vercel
+coverage
